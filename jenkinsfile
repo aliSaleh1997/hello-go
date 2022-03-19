@@ -1,0 +1,36 @@
+pipeline {
+    agent {
+        label 'master'
+    }
+
+    environment {
+        DOCKERHUB               = "$DOCKERHUB"
+        namespace               = "$namespace"
+        service_name            = "$Service_name"
+        code_url                = "$code_repo"
+        code_branch             = "$code_branch"
+        DOCKERHUB_PASSWORD      = credentials('DOCKERHUB_PASSWORD')
+    }
+
+    stages {   
+        stage ('Checkout the code repo') {
+            steps {
+                checkout([$class: 'GitSCM', branches: [[name: "${code_branch}"]], extensions: [], userRemoteConfigs: [[credentialsId: 'devops_secret', url: "${code_url}"]]])
+            }
+        }
+
+        stage ('build image'){
+            steps {
+                sh "docker login ${DOCKERHUB} --username ${DOCKERHUB} --password ${DOCKERHUB_PASSWORD} && docker build -t ${DOCKERHUB}/${service_name}:${BUILD_NUMBER} ."
+                sh "docker push ${DOCKERHUB}/${service_name}:${BUILD_NUMBER}"
+            }
+        }
+                
+        stage ('deploy to kubernetes cluster'){
+            steps {
+                sh "helm -n ${namespace} upgrade --install ${service_name} ${WORKSPACE}/helm/ -f ${WORKSPACE}/helm/values.yaml --set name=${service_name} --set image.repository=${DOCKERHUB}/${service_name} --set image.tag=${BUILD_NUMBER} --set imagePullSecrets[0].name=dockerhub-secret"
+                sh("kubectl -n ${namespace} rollout status deploy/${service_name}")
+            }
+        } 
+    }       
+}
